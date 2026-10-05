@@ -1,0 +1,48 @@
+plugins { id 'com.android.application' }
+def appVersion = new Properties()
+rootProject.file('version.properties').withInputStream { appVersion.load(it) }
+
+// Credentials are local only; the public repository contains a template.
+def signingValues = new Properties()
+def signingFile = rootProject.file('signing/keystore.properties')
+if (signingFile.exists()) {
+    signingFile.withInputStream { signingValues.load(it) }
+}
+def releaseStorePath = System.getenv('WB800F_KEYSTORE_FILE') ?: signingValues.getProperty('storeFile')
+def releaseStorePassword = System.getenv('WB800F_STORE_PASSWORD') ?: signingValues.getProperty('storePassword')
+def releaseAlias = System.getenv('WB800F_KEY_ALIAS') ?: signingValues.getProperty('keyAlias', 'wb800f')
+def releaseKeyPassword = System.getenv('WB800F_KEY_PASSWORD') ?: signingValues.getProperty('keyPassword') ?: releaseStorePassword
+def releaseSigningReady = releaseStorePath && releaseStorePassword && releaseKeyPassword
+if ((releaseStorePath || releaseStorePassword || releaseKeyPassword) && !releaseSigningReady) {
+    throw new GradleException('Incomplete release signing configuration. See signing/README.md.')
+}
+
+android {
+    namespace 'cn.cameralink.wb800f'
+    compileSdk 37
+    buildToolsVersion '37.0.0'
+    defaultConfig {
+        applicationId 'cn.cameralink.wb800f'
+        minSdk 29
+        targetSdk 37
+        versionCode appVersion['VERSION_CODE'].toInteger()
+        versionName appVersion['VERSION_NAME']
+    }
+    signingConfigs {
+        if (releaseSigningReady) {
+            release {
+                storeFile rootProject.file(releaseStorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (releaseSigningReady) signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}

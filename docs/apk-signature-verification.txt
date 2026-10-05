@@ -1,0 +1,18 @@
+Verifies
+Verified using v1 scheme (JAR signing): false
+Verified using v2 scheme (APK Signature Scheme v2): true
+Verified using v3 scheme (APK Signature Scheme v3): false
+Verified using v3.1 scheme (APK Signature Scheme v3.1): false
+Verified using v3.2 scheme (APK Signature Scheme v3.2): false
+Verified using v4 scheme (APK Signature Scheme v4): false
+Verified for SourceStamp: false
+Number of signers: 1
+V2 Signer: certificate DN: CN=WB800F Transfer Local Build, OU=Personal Camera Tool, O=Independent Developer
+V2 Signer: certificate SHA-256 digest: 15056dd5ef0e40b5ef5039ac8eb413da408c7197d15899bf8f45a50730f4ed9b
+V2 Signer: certificate SHA-1 digest: 2b5da9be258ba027dd6eb185951cac5fed786481
+V2 Signer: certificate MD5 digest: ae7cbb556b8c86767f09bc95f809d089
+V2 Signer: key algorithm: RSA
+V2 Signer: key size (bits): 3072
+V2 Signer: public key SHA-256 digest: 896bd0415902e9108580385c64acae286bd6c4e98d4255f0ee95f3671fe6d5a9
+V2 Signer: public key SHA-1 digest: cddcdea0ee36db6d3968da67d742bb7930bc1d6e
+V2 Signer: public key MD5 digest: 9f8b5c5ac7e52c48ddcf68fe117df739

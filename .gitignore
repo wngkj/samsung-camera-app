@@ -1,0 +1,18 @@
+.gradle/
+.idea/
+local.properties
+app/build/
+build/
+*.log
+
+# Local signing credentials and private history must never be committed.
+*.p12
+*.pfx
+*.jks
+*.keystore
+signing/keystore.properties
+history.bundle
+*original-history.bundle
+WB800F-Signing-Backup*.zip
+.env
+.env.*

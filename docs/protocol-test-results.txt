@@ -1,0 +1,20 @@
+PASS namespace + URLBase-relative service URL
+PASS escaped DIDL retains ampersands, prefers original over larger preview
+PASS thumbnail-only items are never passed off as originals
+PASS nested unescaped Result XML
+PASS DTD and external entity rejection
+PASS SSDP case-insensitive headers
+PASS SOAP escapes object identifiers
+PASS stable import key across camera IP changes
+PASS safe filenames
+PASS real HTTP nested directory, pagination and cycle avoidance
+PASS Samsung direct image-container fallback
+PASS SOAP fault at HTTP 200 also triggers Samsung container fallback
+PASS download bytes unchanged and progress counted
+PASS incomplete chunked download rejected
+PASS HTTP vs directory size mismatch rejected
+PASS HTML error never saved as photo
+PASS redirects rejected
+PASS cancel aborts streaming
+PASS repeated pagination is reported, not silently truncated
+19 tests passed
