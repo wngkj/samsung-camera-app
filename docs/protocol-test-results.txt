@@ -18,3 +18,10 @@ PASS redirects rejected
 PASS cancel aborts streaming
 PASS repeated pagination is reported, not silently truncated
 19 tests passed
+PASS Samsung M-SEARCH and ephemeral-port unicast reply
+PASS late approval NOTIFY is discovered on announcement socket
+PASS byebye excluded and location-less reply diagnosed
+PASS self-search ignored and non-HTTP LOCATION rejected
+PASS discovery continues through approval and closes both sockets
+PASS unavailable announcement listener retains unicast discovery
+6 discovery tests passed

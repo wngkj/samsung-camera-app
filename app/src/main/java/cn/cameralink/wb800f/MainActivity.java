@@ -175,7 +175,7 @@ public final class MainActivity extends Activity {
     }
     private void help() {
         new AlertDialog.Builder(this).setTitle("WB800F 照片传输")
-            .setMessage("1. 相机拨盘切换到 Wi-Fi，打开 MobileLink。若出现选项，请选择「从智能手机选择文件」。\n\n2. 点「Wi-Fi 设置」，连接相机显示的 AP_SSC_WB800F… 网络。提示没有互联网时选择保持连接。\n\n3. 回到本应用，点「连接 / 刷新」。安卓 17 提示附近设备 / 本地网络权限时允许；相机出现连接请求时，在相机上点「允许」。\n\n4. 选照片或「仅选未传」，点底部传输按钮。照片保存在 Pictures/WB800F，相册可能需几秒刷新。\n\n请保持相机开启。锁屏后传输可继续；相机省电关机或 Wi-Fi 断开会导致失败，可重新连接再传。已成功的照片会跳过，取消时当前未完成照片会清理。\n\n连接失败：先确认 MobileLink 模式，再暂时关闭 VPN / 自动切换到移动网络。仍有问题可导出诊断。\n\n本应用为独立开发的照片接收工具，无账号，无广告，不上传照片。WB800F 实机与安卓 17 手机连接仍待用户验证。版本 " + TransferService.version(this) + "。")
+            .setMessage("1. 相机拨盘切换到 Wi-Fi，打开 MobileLink。若出现选项，请选择「从智能手机选择文件」。\n\n2. 点「Wi-Fi 设置」，连接相机显示的 AP_SSC_WB800F… 网络。提示没有互联网时选择保持连接。\n\n3. 回到本应用，点「连接 / 刷新」。安卓 17 提示附近设备 / 本地网络权限时允许；应用会持续发现和重试约 45 秒，连接成功后自动显示照片。相机若显示连接请求则允许；直接连接的相机无需此操作。\n\n4. 选照片或「仅选未传」，点底部传输按钮。照片保存在 Pictures/WB800F，相册可能需几秒刷新。\n\n请保持相机开启。锁屏后传输可继续；相机省电关机或 Wi-Fi 断开会导致失败，可重新连接再传。已成功的照片会跳过，取消时当前未完成照片会清理。\n\n连接失败：先确认 MobileLink 模式，再暂时关闭 VPN / 自动切换到移动网络。等显示「连接未完成」后导出完整诊断。\n\n本应用为独立开发的照片接收工具，无账号，无广告，不上传照片。WB800F 实机传输兼容性仍需进一步验证。版本 " + TransferService.version(this) + "。")
             .setPositiveButton("知道了", null).show();
     }
     private void diagnostics() {

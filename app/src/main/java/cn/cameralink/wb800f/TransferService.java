@@ -81,7 +81,7 @@ public final class TransferService extends Service {
     }
     public void connect(String manual) {
         if (!occupied.compareAndSet(false, true)) return;
-        status = "正在连接相机"; detail = "若相机显示连接请求，请在相机上选择「允许」"; progress = 0;
+        status = "正在连接相机"; detail = "请保持相机 MobileLink 开启，并连接相机 Wi-Fi"; progress = 0;
         connected = false; photos = Collections.emptyList(); changed();
         worker.submit(() -> {
             try {
@@ -89,20 +89,44 @@ public final class TransferService extends Service {
                 WifiConnection connection = new WifiConnection(this, clientMac(), this::log); wifi = connection;
                 CameraClient c = new CameraClient(connection, connection.agent(), this::log); client = c;
                 connection.connect(); c.check();
-                List<String> candidates = connection.discover(c, manual);
-                if (candidates.isEmpty()) throw new IOException("未发现相机，请检查 MobileLink 模式和 Wi-Fi 连接");
+                List<String> candidates = connection.candidates(manual);
+                log("开始发现相机，服务等待窗口约 45 秒" + (manual == null ? "" : "，手动地址=" + manual));
+                connection.beginDiscovery();
                 CameraProtocol.Device found = null; Exception last = null;
                 Set<String> paired = new HashSet<>();
-                for (String location : candidates) {
-                    c.check();
-                    String host = new URL(location).getHost();
-                    try { found = c.device(location, 2200); break; }
-                    catch (Exception e) {
-                        last = e; log("设备描述不可用: " + location + " / " + e.getMessage());
-                        if (paired.add(host)) connection.pair(host);
+                Map<String, Long> probed = new HashMap<>();
+                long deadline = SystemClock.elapsedRealtime() + 45000;
+                try {
+                    while (found == null && SystemClock.elapsedRealtime() < deadline) {
+                        c.check();
+                        LinkedHashSet<String> current = new LinkedHashSet<>(connection.discovered());
+                        current.addAll(candidates);
+                        String location = null;
+                        long now = SystemClock.elapsedRealtime();
+                        long oldest = Long.MAX_VALUE;
+                        for (String url : current) {
+                            Long previous = probed.get(url);
+                            if (previous == null) { location = url; break; }
+                            if (now - previous >= 7000 && previous < oldest) { oldest = previous; location = url; }
+                        }
+                        if (location == null) { Thread.sleep(200); continue; }
+                        probed.put(location, now);
+                        status = "正在连接相机";
+                        detail = "正在等待相机照片服务 · 剩余约 " + Math.max(1, (deadline - now) / 1000) + " 秒"; changed();
+                        try { found = c.device(location, 1800); }
+                        catch (Exception e) {
+                            c.check(); last = e; log("设备描述不可用: " + location + " / " + e.getMessage());
+                            String host = new URL(location).getHost();
+                            if (paired.add(host)) connection.pair(host);
+                        }
                     }
+                } finally { connection.endDiscovery(); }
+                if (found == null) {
+                    String discoveryHint = connection.discoveryResponses() == 0
+                        ? "未收到相机发现回复或公告。请确认 MobileLink → 从智能手机选择文件，并保持连接相机 Wi-Fi。"
+                        : "已收到局域网发现报文，但相机照片服务仍不可用，请查看相机屏幕并导出完整日志。";
+                    throw new IOException(discoveryHint + (last == null ? "" : "\n" + last.getMessage()));
                 }
-                if (found == null) throw new IOException("无法读取相机服务，请在相机确认连接后重试。" + (last == null ? "" : "\n" + last.getMessage()));
                 device = found;
                 status = "正在读取照片"; detail = found.name + " · " + connection.localIp(); changed();
                 connection.startEvents(found); c.check();

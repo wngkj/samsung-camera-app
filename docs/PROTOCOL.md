@@ -6,9 +6,9 @@ WB800F 是目标相机。本次环境未接入实际相机；以下是依据同�
 
 1. 用户自行在系统 Wi-Fi 设置连接相机 AP。应用不扫描 SSID，不读取真实 Wi-Fi MAC，不需要定位权限。
 2. `ConnectivityManager.requestNetwork` 选择 Wi-Fi，而不要求 `INTERNET` / `VALIDATED` capability。所有 HTTP/TCP/UDP 使用选定 `Network`，因此系统把默认互联网切到蜂窝时，相机请求依旧走 Wi-Fi。
-3. SSDP 发送 `M-SEARCH` 到 `239.255.255.250:1900`，`ST: ssdp:all` / `upnp:rootdevice`，包含 `USER-AGENT: SEC_DSC_<app client>`、`ACCESS-METHOD: manual`。实际 MAC 在新安卓不可可靠读取，应用生成且持久化一个本地管理格式的 **应用客户端标识**，并不假装它是真实硬件地址。
-4. 优先使用 SSDP `LOCATION`；没有响应时，仅针对当前 Wi-Fi 网关和相同 /24 的常见三星相机地址尝试设备描述路径 `/smp_6_`、`/smp_2_`、`/description.xml`。不是扫描整个网络，不会假定所有相机使用同一个地址。
-5. 描述请求失败时对该主机尝试 7788 `/mode/control`。这是可选的 NX 固件兼容尝试；WB800F 可能不提供该端点，失败会记录后继续，不强制依赖它。相机屏幕的连接确认必须由用户完成。
+3. SSDP 每 2 秒发送 `M-SEARCH` 到 `239.255.255.250:1900`，`ST: ssdp:all` / `upnp:rootdevice` / `MediaServer:1`，包含 `USER-AGENT: SEC_DSC_<app client>`、`ACCESS-METHOD: manual`。同时尝试向当前 Wi-Fi 网关单播搜索。临时端口接收搜索回复，另一个加入该 Wi-Fi 多播组的 UDP 1900 套接字接收 `NOTIFY` 公告，并从固定端口补发多播搜索。监听失败时仍保留临时端口路径。实际 MAC 在新安卓不可可靠读取，应用生成且持久化一个本地管理格式的 **应用客户端标识**，并不假装它是真实硬件地址。
+4. 优先使用 SSDP `LOCATION`；没有响应时，仅针对当前 Wi-Fi 网关和相同 /24 的常见三星相机地址尝试设备描述路径 `/smp_6_`、`/smp_2_`、`/description.xml`。在约 45 秒的服务等待窗口内，持续收包并更新地址，同时公平轮询设备描述，单个 URL 重试间隔至少 7 秒。收到描述后或取消 / 失败时关闭发现套接字。不是扫描整个网络，不会假定所有相机使用同一个地址。
+5. 描述请求失败时对该主机尝试 7788 `/mode/control`。这是可选的 NX 固件兼容尝试；WB800F 可能不提供该端点，失败会记录后继续，不强制依赖它。若固件显示连接请求则由用户确认；直接连接时不要求有此弹窗。
 6. 从设备 XML 获取 ContentDirectory 的真实 `serviceType`、`controlURL`、`eventSubURL`，遵守 `URLBase` 和相对 URL，不硬编码控制路径。
 7. 有 eventSubURL 时创建本地回调，`SUBSCRIBE`，确认相机的 `NOTIFY`，每 40 秒续期申请的 300 秒会话。订阅失败不阻止读取，可在日志中识别会话问题。自定义 HTTP 方法用绑定 Wi-Fi 的原始 TCP 请求，避免 Android HttpURLConnection 不接受 SUBSCRIBE。
 8. 从 ObjectID=0 递归 `BrowseDirectChildren`，每页请求 100 条，依据 NumberReturned / TotalMatches 分页；根目录无法读取或为空时兼容三星 ObjectID=1 图像目录。目录循环去重；重复分页明确报错，避免无提示丢照片。
@@ -41,4 +41,4 @@ WB800F 是目标相机。本次环境未接入实际相机；以下是依据同�
 
 ## 代码职责
 
-`CameraProtocol`、`CameraClient` 不依赖 Android，易于用本地 HTTP 夹具验证。`WifiConnection` 负责 Android 网络和 Samsung 会话。`PhotoStore` 独立处理 MediaStore 提交。`TransferService` 保留可取消任务与进度。`MainActivity` 只负责界面和用户权限，`LogProvider` 只暴露一份用户主动导出的只读日志。
+`CameraProtocol`、`CameraClient`、`SsdpDiscovery` 不依赖 Android，可用本地 HTTP / UDP 夹具验证。`WifiConnection` 负责 Android 网络和 Samsung 会话。`PhotoStore` 独立处理 MediaStore 提交。`TransferService` 保留可取消任务与进度。`MainActivity` 只负责界面和用户权限，`LogProvider` 只暴露一份用户主动导出的只读日志。

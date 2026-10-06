@@ -1,9 +1,10 @@
 package cn.cameralink.wb800f;
 
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.net.*;
 import android.net.wifi.WifiManager;
-import android.os.SystemClock;
+import android.os.Build;
 import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
@@ -14,6 +15,7 @@ import java.util.function.Consumer;
 /** Keeps every socket on the selected Wi-Fi, even when Android prefers cellular Internet. */
 public final class WifiConnection implements CameraClient.Transport, AutoCloseable {
     private final ConnectivityManager cm;
+    private final Context context;
     private final Consumer<String> log;
     private final String mac, agent;
     private volatile Network network;
@@ -26,7 +28,9 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
     private ScheduledExecutorService heartbeat;
     private volatile CameraProtocol.Device device;
     private volatile String sid;
+    private volatile SsdpDiscovery discovery;
     public WifiConnection(Context context, String clientMac, Consumer<String> logger) {
+        this.context = context.getApplicationContext();
         cm = (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
         log = logger; mac = clientMac; agent = "SEC_DSC_" + mac;
         WifiManager wifi = (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
@@ -35,6 +39,11 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
     public String agent() { return agent; }
     public String localIp() { return address == null ? "" : address.getHostAddress(); }
     public void connect() throws Exception {
+        boolean allowed = Build.VERSION.SDK_INT < 37
+            || context.checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") == PackageManager.PERMISSION_GRANTED;
+        log.accept("局域网权限=" + (allowed ? "允许" : "未允许") + "，INTERNET="
+            + (context.checkSelfPermission("android.permission.INTERNET") == PackageManager.PERMISSION_GRANTED));
+        if (!allowed) throw new IOException("请在应用权限中允许本地网络 / 附近设备，再连接相机");
         CountDownLatch ready = new CountDownLatch(1);
         callback = new ConnectivityManager.NetworkCallback() {
             private void update(Network n, LinkProperties props) {
@@ -61,6 +70,11 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
         if (!ready.await(8, TimeUnit.SECONDS)) throw new IOException("手机尚未连接相机 Wi-Fi，请打开 Wi-Fi 设置连接 AP_SSC_WB800F…");
         multicast.acquire();
         log.accept("Wi-Fi IPv4=" + localIp() + ", gateway=" + gateway + ", app client=" + mac);
+        LinkProperties links = cm.getLinkProperties(requireNetwork());
+        NetworkCapabilities caps = cm.getNetworkCapabilities(requireNetwork());
+        log.accept("Wi-Fi network=" + network + "，interface=" + (links == null ? "unknown" : links.getInterfaceName())
+            + "，validated=" + (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+            + "，默认网络=" + cm.getActiveNetwork());
     }
     private Network requireNetwork() throws IOException {
         Network n = network;
@@ -77,7 +91,7 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
         URL url = new URL(target); localUrl(url);
         return (HttpURLConnection) requireNetwork().openConnection(url, java.net.Proxy.NO_PROXY);
     }
-    public List<String> discover(CameraClient client, String manual) throws Exception {
+    public List<String> candidates(String manual) throws Exception {
         LinkedHashSet<String> urls = new LinkedHashSet<>();
         if (manual != null && !manual.trim().isEmpty()) {
             String s = manual.trim();
@@ -89,33 +103,6 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
                 String[] a = s.split(":"); addCandidates(urls, a[0], a.length > 1 ? Integer.parseInt(a[1]) : -1);
             }
         }
-        // Send Samsung discovery even with a manual address: it can trigger camera approval.
-        // Samsung's SEC_DSC_ user agent is essential to trigger its MobileLink confirmation.
-        try (MulticastSocket socket = new MulticastSocket(null)) {
-            socket.setReuseAddress(true);
-            requireNetwork().bindSocket(socket);
-            socket.bind(new InetSocketAddress(address, 0));
-            socket.setNetworkInterface(NetworkInterface.getByInetAddress(address));
-            socket.setTimeToLive(2); socket.setSoTimeout(500);
-            for (int attempt = 0; attempt < 3; attempt++) {
-                client.check();
-                String search = "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1900\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\n"
-                    + "ST: " + (attempt == 1 ? "upnp:rootdevice" : "ssdp:all") + "\r\nUSER-AGENT: " + agent + "\r\nACCESS-METHOD: manual\r\n\r\n";
-                byte[] packet = search.getBytes(StandardCharsets.US_ASCII);
-                socket.send(new DatagramPacket(packet, packet.length, InetAddress.getByName("239.255.255.250"), 1900));
-                long until = SystemClock.elapsedRealtime() + 2000;
-                while (SystemClock.elapsedRealtime() < until) {
-                    client.check();
-                    try {
-                        byte[] bytes = new byte[65507]; DatagramPacket response = new DatagramPacket(bytes, bytes.length);
-                        socket.receive(response);
-                        String location = CameraProtocol.headers(new String(bytes, 0, response.getLength(), StandardCharsets.UTF_8)).get("location");
-                        if (location != null && urls.size() < 32) { urls.add(location); log.accept("SSDP location: " + location); }
-                    } catch (SocketTimeoutException ignored) { }
-                }
-                if (!urls.isEmpty()) break;
-            }
-        } catch (Exception e) { client.check(); log.accept("SSDP: " + e.getMessage()); }
         if (gateway != null) addCandidates(urls, gateway, -1);
         // Only try conventional Samsung addresses that belong to the connected /24.
         String ip = localIp();
@@ -123,6 +110,38 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
             if (ip.substring(0, ip.lastIndexOf('.')).equals(host.substring(0, host.lastIndexOf('.')))) addCandidates(urls, host, -1);
         return new ArrayList<>(urls);
     }
+    /** Leave both sockets open until the camera's photo service becomes available. */
+    public void beginDiscovery() {
+        MulticastSocket search = null, announcements = null;
+        try {
+            Network n = requireNetwork();
+            NetworkInterface iface = NetworkInterface.getByInetAddress(address);
+            search = new MulticastSocket(null); search.setReuseAddress(true);
+            n.bindSocket(search); search.bind(new InetSocketAddress(address, 0));
+            search.setNetworkInterface(iface); search.setTimeToLive(2);
+            try {
+                announcements = new MulticastSocket(null); announcements.setReuseAddress(true);
+                n.bindSocket(announcements); announcements.bind(new InetSocketAddress(1900));
+                announcements.setNetworkInterface(iface); announcements.setTimeToLive(2);
+                announcements.joinGroup(new InetSocketAddress("239.255.255.250", 1900), iface);
+                log.accept("SSDP 公告监听已开启：UDP 1900，interface=" + iface.getName());
+            } catch (Exception e) {
+                if (announcements != null) announcements.close(); announcements = null;
+                log.accept("SSDP 公告监听不可用，继续单播回复: " + e.getMessage());
+            }
+            List<InetSocketAddress> destinations = new ArrayList<>();
+            destinations.add(new InetSocketAddress("239.255.255.250", 1900));
+            if (gateway != null && !gateway.equals(localIp())) destinations.add(new InetSocketAddress(n.getByName(gateway), 1900));
+            discovery = new SsdpDiscovery(search, announcements, destinations, agent, log);
+            discovery.start();
+        } catch (Exception e) {
+            if (search != null) search.close(); if (announcements != null) announcements.close();
+            log.accept("SSDP 启动失败: " + e.getMessage());
+        }
+    }
+    public List<String> discovered() { SsdpDiscovery d = discovery; return d == null ? Collections.emptyList() : d.locations(); }
+    public int discoveryResponses() { SsdpDiscovery d = discovery; return d == null ? 0 : d.receivedCount(); }
+    public void endDiscovery() { SsdpDiscovery d = discovery; if (d != null) d.close(); }
     private static void addCandidates(Set<String> urls, String host, int port) {
         int p = port > 0 ? port : 7676;
         urls.add("http://" + host + ":" + p + "/smp_6_");
@@ -212,6 +231,7 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
     }
     @Override public void close() {
         closed = true;
+        endDiscovery();
         if (heartbeat != null) heartbeat.shutdownNow();
         if (eventServer != null) try { eventServer.close(); } catch (Exception ignored) { }
         if (multicast != null && multicast.isHeld()) multicast.release();
