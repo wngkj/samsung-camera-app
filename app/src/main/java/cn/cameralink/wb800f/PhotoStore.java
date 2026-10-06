@@ -57,6 +57,44 @@ public final class PhotoStore {
             return uri;
         } finally { if (!committed) resolver.delete(uri, null, null); }
     }
+    /** Transaction used by camera-selected sending; deduplicates the full received bytes. */
+    public SamsungPushReceiver.Transaction beginPush(String name, long size) throws Exception {
+        ContentValues values = new ContentValues();
+        values.put(MediaStore.Images.Media.DISPLAY_NAME, name);
+        values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+        values.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/WB800F");
+        values.put(MediaStore.Images.Media.IS_PENDING, 1);
+        Uri uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+        if (uri == null) throw new IOException("无法创建相册照片，请检查手机剩余空间");
+        try {
+            OutputStream raw = resolver.openOutputStream(uri, "w");
+            if (raw == null) throw new IOException("无法写入相册");
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            DigestOutputStream output = new DigestOutputStream(new BufferedOutputStream(raw), digest);
+            return new SamsungPushReceiver.Transaction() {
+                private boolean finished;
+                @Override public OutputStream output() { return output; }
+                @Override @android.annotation.SuppressLint("ApplySharedPref") public boolean commit() throws Exception {
+                    output.close();
+                    StringBuilder sha = new StringBuilder();
+                    for (byte b : digest.digest()) sha.append(String.format(Locale.ROOT, "%02x", b & 255));
+                    String key = "push-" + sha;
+                    if (exists(key)) {
+                        resolver.delete(uri, null, null); finished = true; return false;
+                    }
+                    ContentValues complete = new ContentValues(); complete.put(MediaStore.Images.Media.IS_PENDING, 0);
+                    if (resolver.update(uri, complete, null, null) != 1) throw new IOException("无法完成相册保存");
+                    finished = true;
+                    index.edit().putString(key, uri.toString()).putString(key + ".sha256", sha.toString()).commit();
+                    return true;
+                }
+                @Override public void close() {
+                    try { output.close(); } catch (IOException ignored) { }
+                    if (!finished) resolver.delete(uri, null, null);
+                }
+            };
+        } catch (Exception e) { resolver.delete(uri, null, null); throw e; }
+    }
     /** Remove this app's stale pending writes after process death; completed photos remain untouched. */
     public void cleanupPending() {
         String selection = MediaStore.Images.Media.IS_PENDING + "=1 AND " + MediaStore.Images.Media.RELATIVE_PATH + "=? AND "

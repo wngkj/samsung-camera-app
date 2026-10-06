@@ -7,5 +7,6 @@
 - [ge0rg/samsung-nx-hacks Remote Viewfinder](https://github.com/ge0rg/samsung-nx-hacks/wiki/Remote-Viewfinder)：NX 系列公开的可选 7788 mode/control 请求；不代表 WB800F 必然提供该端点。
 - [Android 17 本地网络权限](https://developer.android.com/privacy-and-security/local-network-permission)：targetSdk 37 的 ACCESS_LOCAL_NETWORK 运行时权限。
 - [Android 17 SDK 设置](https://developer.android.com/about/versions/17/setup-sdk)。
+- Samsung SMART CAMERA App 1.4.0_180703：只用于分析互操作协议，核验记录见 `docs/PROTOCOL.md`。1.0.2 的 SP 实现由本工程独立编写，未复制或分发原 APK / 分析生成的源码。
 
 本项目无第三方运行时库。Gradle Wrapper 用于开发构建，来自 Gradle 9.6.0，采用 Apache License 2.0；见 `gradle/WRAPPER-LICENSE.txt`。官方 Android SDK 与 JDK 是构建工具，未打包进入 APK 或源码 ZIP。

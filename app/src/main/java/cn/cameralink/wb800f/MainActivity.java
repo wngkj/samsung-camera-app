@@ -140,8 +140,13 @@ public final class MainActivity extends Activity {
         send.setEnabled(connected && !busy && !selected.isEmpty()); cancel.setEnabled(busy);
         send.setAlpha(send.isEnabled() ? 1 : 0.45f); cancel.setAlpha(busy ? 1 : 0.45f);
         progress.setVisibility(busy ? View.VISIBLE : View.GONE);
-        selection.setText(s == null || s.photos.isEmpty() ? "相机照片" : "已选 " + selected.size() + " / " + s.photos.size() + " 张");
-        send.setText(selected.isEmpty() ? "传输所选照片" : "传输 " + selected.size() + " 张照片");
+        selection.setText(s != null && s.receiving ? "相机选片接收 · 已保存 " + s.pushAdded + " 张"
+            : s == null || s.photos.isEmpty() ? "相机照片" : "已选 " + selected.size() + " / " + s.photos.size() + " 张");
+        send.setText(s != null && s.receiving ? "请在相机上选片并发送" : selected.isEmpty() ? "传输所选照片" : "传输 " + selected.size() + " 张照片");
+        TextView empty = (TextView) list.getEmptyView();
+        if (empty != null) empty.setText(s != null && s.receiving
+            ? "相机选片接收已开启\n\n在相机屏幕选择照片\n然后点「共享 / 发送」\n照片会自动保存到手机相册"
+            : "让相机里的照片\n回到手机相册\n\n1  相机打开 MobileLink\n2  手机连接相机 Wi-Fi\n3  点「连接 / 刷新」");
         adapter.notifyDataSetChanged();
     }
     private void requestConnect(String manual) {
@@ -167,15 +172,28 @@ public final class MainActivity extends Activity {
         EditText input = new EditText(this); input.setSingleLine(true); input.setTextSize(15);
         input.setHint("192.168.107.1 或设备描述 URL"); input.setPadding(dp(20), dp(12), dp(20), dp(12));
         SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE); input.setText(prefs.getString("manual", ""));
-        new AlertDialog.Builder(this).setTitle("手动连接相机").setMessage("自动连接失败时，可输入相机 IPv4 地址（支持 IP:端口），或完整 UPnP 设备描述 URL。相机地址可在已连接 Wi-Fi 的网关信息中查看。")
-            .setView(input).setPositiveButton("连接", (dialog, which) -> {
+        LinearLayout fields = new LinearLayout(this); fields.setOrientation(LinearLayout.VERTICAL); fields.addView(input);
+        TextView label = text("旧相机兼容：手机 Wi-Fi MAC（选填）", 13, MUTED, false);
+        label.setPadding(dp(20), dp(10), dp(20), 0); fields.addView(label);
+        EditText phoneMac = new EditText(this); phoneMac.setSingleLine(true); phoneMac.setTextSize(14);
+        phoneMac.setHint("手机 Wi-Fi 详情里的 MAC，非相机 MAC"); phoneMac.setPadding(dp(20), dp(12), dp(20), dp(12));
+        phoneMac.setText(prefs.getString("clientMacOverride", "")); fields.addView(phoneMac);
+        new AlertDialog.Builder(this).setTitle("手动连接相机").setMessage("相机地址支持 IPv4 或设备描述 URL，留空则自动连接。手机 MAC 可在当前相机 Wi-Fi 的系统详情中查看；无须填写相机的 MAC。")
+            .setView(fields).setPositiveButton("连接", (dialog, which) -> {
                 String value = input.getText().toString().trim();
-                if (!value.isEmpty()) { prefs.edit().putString("manual", value).apply(); requestConnect(value); }
+                String mac = phoneMac.getText().toString().trim().toLowerCase(java.util.Locale.ROOT);
+                if (!mac.isEmpty() && (!mac.matches("([0-9a-f]{2}:){5}[0-9a-f]{2}")
+                    || mac.equals("02:00:00:00:00:00") || mac.equals("00:00:00:00:00:00")
+                    || (Integer.parseInt(mac.substring(0, 2), 16) & 1) != 0)) {
+                    Toast.makeText(this, "请填写有效的手机 Wi-Fi MAC 地址，或留空", Toast.LENGTH_LONG).show(); return;
+                }
+                prefs.edit().putString("manual", value).putString("clientMacOverride", mac).apply();
+                requestConnect(value.isEmpty() ? null : value);
             }).setNegativeButton("取消", null).show();
     }
     private void help() {
         new AlertDialog.Builder(this).setTitle("WB800F 照片传输")
-            .setMessage("1. 相机拨盘切换到 Wi-Fi，打开 MobileLink。若出现选项，请选择「从智能手机选择文件」。\n\n2. 点「Wi-Fi 设置」，连接相机显示的 AP_SSC_WB800F… 网络。提示没有互联网时选择保持连接。\n\n3. 回到本应用，点「连接 / 刷新」。安卓 17 提示附近设备 / 本地网络权限时允许；应用会持续发现和重试约 45 秒，连接成功后自动显示照片。相机若显示连接请求则允许；直接连接的相机无需此操作。\n\n4. 选照片或「仅选未传」，点底部传输按钮。照片保存在 Pictures/WB800F，相册可能需几秒刷新。\n\n请保持相机开启。锁屏后传输可继续；相机省电关机或 Wi-Fi 断开会导致失败，可重新连接再传。已成功的照片会跳过，取消时当前未完成照片会清理。\n\n连接失败：先确认 MobileLink 模式，再暂时关闭 VPN / 自动切换到移动网络。等显示「连接未完成」后导出完整诊断。\n\n本应用为独立开发的照片接收工具，无账号，无广告，不上传照片。WB800F 实机传输兼容性仍需进一步验证。版本 " + TransferService.version(this) + "。")
+            .setMessage("1. 相机切到 Wi-Fi → MobileLink。支持「从相机选择文件」和「从智能手机选择文件」两种方式。\n\n2. 点「Wi-Fi 设置」，连接相机屏幕显示的热点。没有互联网时选择保持连接。\n\n3. 回到应用点「连接 / 刷新」，允许安卓 17 的本地网络权限。相机直接连接时无需确认；有弹窗时再允许。\n\n4. 显示「请在相机上发送照片」时：在相机屏幕选择 JPEG 照片，再点「共享 / 发送」，手机会自动保存。显示照片列表时：在手机选择照片并点传输。\n\n照片保存在 Pictures/WB800F。请保持相机开启和 Wi-Fi 连接，接收时可返回桌面。取消会停止会话并清理当前未完成照片，已保存照片保留。\n\n连接失败请导出完整诊断。「手动连接」中可选填手机当前 Wi-Fi 的 MAC，非相机 MAC；一般可留空。\n\n独立开发，无账号、广告或上传。新版相机选片接收仍需实机确认。版本 " + TransferService.version(this) + "。")
             .setPositiveButton("知道了", null).show();
     }
     private void diagnostics() {

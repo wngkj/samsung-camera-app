@@ -97,10 +97,12 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
             String s = manual.trim();
             if (s.startsWith("http://") || s.startsWith("https://")) {
                 URL u = new URL(s); localUrl(u); urls.add(s);
+                if (u.getHost().equals(localIp())) throw new IOException("该地址是手机自身，请填写相机地址或 Wi-Fi 网关");
                 if (u.getPath().isEmpty() || u.getPath().equals("/")) addCandidates(urls, u.getHost(), u.getPort());
             } else {
                 if (!s.matches("[0-9.]+(:[0-9]{1,5})?")) throw new IOException("请输入相机 IPv4 地址，或完整的设备描述 URL");
                 String[] a = s.split(":"); addCandidates(urls, a[0], a.length > 1 ? Integer.parseInt(a[1]) : -1);
+                if (a[0].equals(localIp())) throw new IOException("该地址是手机自身，请填写相机地址或 Wi-Fi 网关");
             }
         }
         if (gateway != null) addCandidates(urls, gateway, -1);
@@ -160,6 +162,23 @@ public final class WifiConnection implements CameraClient.Transport, AutoCloseab
         } catch (Exception e) { log.accept("可选 mode/control 配对: " + e.getMessage()); }
     }
     public String gateway() { return gateway; }
+    public boolean cameraSelectedMode() { return gateway != null && gateway.startsWith("192.168.104."); }
+    public ServerSocket pushServer() throws Exception {
+        requireNetwork();
+        ServerSocket server = new ServerSocket(); server.setReuseAddress(true);
+        try { server.bind(new InetSocketAddress(address, 18100)); }
+        catch (Exception e) { server.close(); throw e; }
+        log.accept("相机选片接收监听: " + localIp() + ":18100"); return server;
+    }
+    public InetAddress cameraAddress(String host) throws Exception {
+        localUrl(new URL("http://" + host + "/")); return requireNetwork().getByName(host);
+    }
+    public Socket pushSocket(String host, int port, int timeout) throws Exception {
+        InetAddress target = cameraAddress(host);
+        Socket socket = requireNetwork().getSocketFactory().createSocket();
+        try { socket.connect(new InetSocketAddress(target, port), timeout); return socket; }
+        catch (Exception e) { socket.close(); throw e; }
+    }
     public void startEvents(CameraProtocol.Device d) {
         device = d;
         if (d.event.isEmpty()) return;

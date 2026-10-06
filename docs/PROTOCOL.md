@@ -2,7 +2,28 @@
 
 ## 相机流程与不确定性
 
-WB800F 是目标相机。本次环境未接入实际相机；以下是依据同代 Samsung WB 相机的公开协议实现得到的互操作策略，不是 WB800F 抓包结果。后续应使用应用诊断日志核实实际 LOCATION、设备描述、Browse 服务及资源。
+WB800F 是目标相机。本环境未接入实际相机。用户日志已经证明应用启动、局域网授权和 Wi-Fi 绑定，并显示 192.168.104.11 / 网关 192.168.104.1；没有证明照片端到端传输成功。1.0.2 根据旧三星客户端的协议分析补齐相机选片发送；其余 DLNA 路径依据同代 WB 公开实现。详见下面的核对记录。
+
+### 相机选片发送（SP，1.0.2 新增）
+
+原客户端对 DHCP 相机地址的第三段分类：101 为手机选片，102 为取景，103 为自动发送，104 为相机选片，107 使用模式协商。这说明 104 网络不能只按 DLNA 去请求 7676。应用根据当前 Wi-Fi 网关的 192.168.104.* 选择 SP；提供完整描述 URL 时保留用户显式指定的 DLNA 连接。
+
+1. 手机在当前 Wi-Fi IPv4 上监听 TCP 18100，接收端只接受当前相机 IP。
+2. 向相机 8100–8103 依次发送 `HEAD /sp/control`。字段包含 `SEC_SP_<手机端标识>`、`Data-Server`（手机 IPv4:18100）、`Data-Port`（18100）、`NTS: alive`、`Access-Method: manual`、`HOST-PNumber: none`。不是向 8100 发送 `/mode/control`。
+3. 相机成功响应后，用户在相机选片并共享 / 发送。手机接收带文件路径、Content-Length 和 Expect 的请求，先创建 pending 相册条目，再答复 100 Continue，然后写入固定长度的原 JPEG 字节。
+4. 仅接收 JPG / JPEG，检查 JPEG 开头，单张上限 256 MiB；截断、存储失败或取消均不发布 pending 文件。成功关闭流并提交相册后，发送 200 和 Sub-ErrorCode: 0。
+5. 完整文件 SHA256 作为 SP 导入索引；若对应的已保存 URI 仍存在，清理本次 pending 重复副本并成功应答。该内容索引与 DLNA 的目录键分别维护，跨模式首次导入可能重复。
+6. 接收会话保持前台服务，用户取消或相机结束命令会关闭监听和当前接收，通知相机 NTS byebye（尽力发送）；未完成条目删除，完成条目保留。
+
+手机 MAC 不是相机 MAC。默认继续使用应用生成的持久化客户端标识；「手动连接」可选填系统当前 Wi-Fi 详情里的手机 MAC。应用不通过受限 API 偷读真实 MAC，不增加定位或电话权限。
+
+### 旧三星客户端核对记录
+
+分析对象为 Samsung SMART CAMERA App 1.4.0_180703，包名 com.samsungimaging.connectionmanager。文件 SHA256 `ee64e1a658f93970207cd88f8cf2b2ebeae2d847fcc7e937d7757a41b3e78aaf`，签名证书 SHA256 `84ec03b097fe6f5e88ad35d93e92be5ab4ca76f710375dc69990b4960547b4a8`；下载后分别核验了文件哈希和 APK v1 签名，与历史镜像元数据一致。
+
+协议事实通过分析客户端模式分类、SelectivePush 控制端点、接收头与应答格式确认。采用这些协议事实独立实现，不复制原客户端的方法或类，不将原 APK 或分析生成的源码放入交付工程。历史版本元数据：[APKMirror 1.4.0_180703](https://www.apkmirror.com/apk/samsung-electronics-co-ltd/samsung-smart-camera-app/samsung-smart-camera-app-1-4-0_180703-release/samsung-smart-camera-app-1-4-0_180703-android-apk-download/)。客户端分析不是 WB800F 实机抓包，仍需新版日志核实实际握手和发送。
+
+### 手机选片浏览（DLNA）
 
 1. 用户自行在系统 Wi-Fi 设置连接相机 AP。应用不扫描 SSID，不读取真实 Wi-Fi MAC，不需要定位权限。
 2. `ConnectivityManager.requestNetwork` 选择 Wi-Fi，而不要求 `INTERNET` / `VALIDATED` capability。所有 HTTP/TCP/UDP 使用选定 `Network`，因此系统把默认互联网切到蜂窝时，相机请求依旧走 Wi-Fi。

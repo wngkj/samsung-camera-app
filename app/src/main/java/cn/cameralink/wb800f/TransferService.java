@@ -29,11 +29,14 @@ public final class TransferService extends Service {
     public volatile String status = "等待连接相机", detail = "先在相机上打开 Wi-Fi → MobileLink";
     public volatile int progress = 0;
     public volatile boolean transferring, connected;
+    public volatile boolean receiving;
+    public volatile int pushAdded, pushSkipped;
     public volatile List<CameraProtocol.Photo> photos = Collections.emptyList();
     public volatile Set<String> downloaded = Collections.emptySet();
     private volatile CameraProtocol.Device device;
     private volatile CameraClient client;
     private volatile WifiConnection wifi;
+    private volatile SamsungPushClient pushClient;
     private PhotoStore store;
     private PowerManager.WakeLock wake;
     private final Deque<String> logLines = new ArrayDeque<>();
@@ -71,6 +74,8 @@ public final class TransferService extends Service {
     }
     private String clientMac() {
         SharedPreferences prefs = getSharedPreferences("settings", MODE_PRIVATE);
+        String override = prefs.getString("clientMacOverride", "");
+        if (!override.isEmpty()) return override;
         String mac = prefs.getString("clientMac", null);
         if (mac == null) {
             byte[] bytes = new byte[5]; new java.security.SecureRandom().nextBytes(bytes);
@@ -90,6 +95,11 @@ public final class TransferService extends Service {
                 CameraClient c = new CameraClient(connection, connection.agent(), this::log); client = c;
                 connection.connect(); c.check();
                 List<String> candidates = connection.candidates(manual);
+                if (connection.cameraSelectedMode() && (manual == null || !manual.startsWith("http"))) {
+                    log("识别 192.168.104.*：相机选片发送模式，使用 SP 而非 DLNA");
+                    String host = manual == null || manual.trim().isEmpty() ? connection.gateway() : new URL(candidates.get(0)).getHost();
+                    startCameraSelected(connection, c, host); return;
+                }
                 log("开始发现相机，服务等待窗口约 45 秒" + (manual == null ? "" : "，手动地址=" + manual));
                 connection.beginDiscovery();
                 CameraProtocol.Device found = null; Exception last = null;
@@ -138,7 +148,61 @@ public final class TransferService extends Service {
             } catch (Exception e) {
                 status = client != null && client.cancelled ? "连接已取消" : "连接未完成";
                 detail = e.getMessage() == null ? e.toString() : e.getMessage(); log("连接: " + detail); disconnectInternal();
-            } finally { occupied.set(false); changed(); }
+            } finally { occupied.set(receiving); changed(); }
+        });
+    }
+    private void startCameraSelected(WifiConnection connection, CameraClient c, String host) throws Exception {
+        pushAdded = 0; pushSkipped = 0;
+        java.net.InetAddress camera = connection.cameraAddress(host);
+        SamsungPushReceiver receiver = new SamsungPushReceiver(connection.pushServer(), camera,
+            store::beginPush, new SamsungPushReceiver.Listener() {
+                private long lastUpdate;
+                @Override public void progress(String name, long bytes, long total) {
+                    if (!receiving || wifi != connection) return;
+                    long now = SystemClock.elapsedRealtime();
+                    if (now - lastUpdate < 250 && bytes != total) return; lastUpdate = now;
+                    status = "正在接收 · " + name; progress = (int) (bytes * 100 / total);
+                    detail = formatSize(bytes) + " / " + formatSize(total) + " · 已保存 " + pushAdded + " 张";
+                    changed(); getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(status));
+                }
+                @Override public void saved(String name, boolean added) {
+                    if (!receiving || wifi != connection) return;
+                    if (added) pushAdded++; else pushSkipped++;
+                    status = "等待相机继续发送"; progress = 0;
+                    detail = "已保存 " + pushAdded + " 张 · 重复 " + pushSkipped + " 张 · 请在相机选片并点共享 / 发送";
+                    changed(); getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(status));
+                }
+                @Override public void ended(String reason) {
+                    if (!receiving || wifi != connection) return;
+                    log(reason); stopCameraSelected("相机发送已结束");
+                }
+                @Override public void failed(String reason) {
+                    if (!receiving || wifi != connection) return;
+                    status = "接收失败，可在相机重试"; progress = 0;
+                    detail = reason + " · 已完成照片保留"; changed();
+                    getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(status));
+                }
+            }, this::log);
+        SamsungPushClient push = new SamsungPushClient(connection::pushSocket,
+            receiver, host, connection.localIp(), clientMac(), this::log);
+        pushClient = push; c.check();
+        startForeground(NOTIFICATION, notification("正在连接相机选片接收"), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        startService(new Intent(this, TransferService.class)); wake.acquire(6 * 60 * 60 * 1000L);
+        receiving = true; transferring = true;
+        push.connect(); c.check(); connected = true;
+        status = "已连接 · 请在相机上发送照片";
+        detail = "在相机屏幕选择照片，再点共享 / 发送；照片自动保存到手机相册。点取消可停止接收。";
+        log("SP 会话已连接，等待相机将原照片发送到 " + connection.localIp() + ":18100");
+        changed(); getSystemService(NotificationManager.class).notify(NOTIFICATION, notification(status));
+    }
+    private void stopCameraSelected(String message) {
+        receiving = false; connected = false;
+        SamsungPushClient push = pushClient; if (push != null) push.close();
+        CameraClient c = client; if (c != null) c.cancel();
+        worker.submit(() -> {
+            disconnectInternal(); occupied.set(false); status = message;
+            detail = "已保存 " + pushAdded + " 张 · 重复 " + pushSkipped + " 张 · 已完成照片保留";
+            changed();
         });
     }
     private void refreshDownloaded() {
@@ -208,7 +272,10 @@ public final class TransferService extends Service {
             .setContentText("照片保存到 Pictures/WB800F").setContentIntent(open).setOngoing(true)
             .setProgress(100, progress, false).addAction(new Notification.Action.Builder(null, "取消", stop).build()).build();
     }
-    public void cancel() { CameraClient c = client; if (c != null) c.cancel(); log("用户取消操作"); }
+    public void cancel() {
+        CameraClient c = client; if (c != null) c.cancel(); log("用户取消操作");
+        if (receiving || pushClient != null) stopCameraSelected("相机接收已停止");
+    }
     public void thumbnail(CameraProtocol.Photo p, java.util.function.Consumer<Bitmap> callback) {
         CameraClient c = client;
         if (p.thumb == null || c == null || busy() || !connected) { callback.accept(null); return; }
@@ -228,6 +295,12 @@ public final class TransferService extends Service {
     }
     public static String formatSize(long size) { return size < 1024 * 1024 ? String.format(Locale.CHINA, "%.0f KB", size / 1024.0) : String.format(Locale.CHINA, "%.1f MB", size / 1048576.0); }
     private void disconnectInternal() {
+        SamsungPushClient push = pushClient; pushClient = null;
+        if (push != null) {
+            push.close(); receiving = false; transferring = false;
+            if (wake != null && wake.isHeld()) wake.release();
+            stopForeground(STOP_FOREGROUND_REMOVE); stopSelf();
+        }
         CameraClient c = client; if (c != null) c.cancel();
         WifiConnection w = wifi; if (w != null) w.close();
         client = null; wifi = null; connected = false;

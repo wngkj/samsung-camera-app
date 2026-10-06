@@ -25,3 +25,16 @@ PASS self-search ignored and non-HTTP LOCATION rejected
 PASS discovery continues through approval and closes both sockets
 PASS unavailable announcement listener retains unicast discovery
 6 discovery tests passed
+PASS fragmented Samsung headers, 100 Continue and unchanged bytes committed before 200
+PASS repeated photo acknowledged without adding another saved file
+PASS header and body arriving together preserve framing
+PASS truncated body rejected and pending storage rolled back
+PASS non-JPEG body is not published as a photo
+PASS storage commit failure produces error rather than success acknowledgement
+PASS non-photo transfer rejected before storage begins
+PASS ambiguous duplicate Content-Length is rejected
+PASS camera end command is acknowledged and reported
+PASS cancellation interrupts the active socket and rolls back pending storage
+PASS only the selected camera peer may send photos
+PASS SP HEAD handshake advertises real receiver and falls back across camera ports
+12 push tests passed
