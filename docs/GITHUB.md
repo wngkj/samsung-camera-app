@@ -11,7 +11,7 @@
 
 所有 Release 的 APK 均为此前交付的原始安装包，没有换签名，也没有重新构建后替换。
 公开源码 ZIP 是重新整理后的副本，不含私钥、密码或原始私有 Git bundle。
-最新 Release 附带的 public-history.bundle 只包含清理后的公开历史。
+最新 Release 提供下载的 public-history.bundle 只包含清理后的公开历史。
 
 ## 后续开发
 
@@ -20,3 +20,5 @@
 私钥及实际密码配置不会被 Git 跟踪；不要从旧的原始工程推送历史到公开仓库。
 
 三版协议说明和验证结果保留在 docs/。真实 WB800F 与 Android 17 的端到端传输仍待实机验证。
+
+本次下载文件保存在 `downloads/v<版本>/`，Release 页面提供对应固定提交的下载直链。
